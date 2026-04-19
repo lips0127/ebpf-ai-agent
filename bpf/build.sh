@@ -17,10 +17,10 @@ detect_version() {
     local major=$(echo $ver | cut -d. -f1)
     local minor=$(echo $ver | cut -d. -f2)
 
-    if [[ "$major" -lt 5 ]] || [[ "$major" -eq 5 && "$minor" -lt 4 ]]; then
+    if [[ "$major" -lt 5 ]]; then
         echo "unsupported"
     elif [[ "$major" -eq 5 && "$minor" -lt 8 ]]; then
-        echo "5_4"
+        echo "5_8"
     elif [[ "$major" -eq 5 && "$minor" -lt 16 ]]; then
         echo "5_8"
     else
@@ -49,14 +49,6 @@ fi
 
 # Select probe source
 case $VERSION in
-    "5_4")
-        echo "Building for kernel 5.4-5.7 (no BTF/CO-RE)"
-        PROBE_FILE="probe_5_4.c"
-        CC_FLAGS="-target bpf -O2 -g"
-        if [[ -n "$VMLINUX_H" ]]; then
-            CC_FLAGS="$CC_FLAGS -I${SCRIPT_DIR}"
-        fi
-        ;;
     "5_8")
         echo "Building for kernel 5.8-5.15 (ringbuf, no CO-RE)"
         PROBE_FILE="probe_5_8.c"

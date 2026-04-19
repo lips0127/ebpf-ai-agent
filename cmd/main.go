@@ -21,6 +21,8 @@ import (
 
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
+
+	"github.com/cilium/ebpf/link"
 )
 
 const (
@@ -146,6 +148,14 @@ func main() {
 	}
 	defer objs.Close()
 
+	// Attach tracepoint program
+	l, err := link.Tracepoint("sched", "sched_process_exec", objs.HandleSchedProcessExec, nil)
+	if err != nil {
+		log.Fatalf("failed to attach tracepoint: %v", err)
+	}
+	defer l.Close()
+	log.Printf("[DEBUG] tracepoint attached successfully")
+
 	rd, err := perf.NewReader(objs.Events, 4096)
 	if err != nil {
 		log.Fatalf("failed to open perf reader: %v", err)
@@ -157,6 +167,7 @@ func main() {
 
 	go runFlushTask(cache, flushDone)
 
+	eventCount := 0
 	go func() {
 		for {
 			record, err := rd.Read()
@@ -169,17 +180,23 @@ func main() {
 				continue
 			}
 
+			eventCount++
 			var event bpf.Event
 			r := bytes.NewReader(record.RawSample)
 			binary.Read(r, binary.LittleEndian, &event.Pid)
 			binary.Read(r, binary.LittleEndian, &event.Ppid)
 			r.Read(event.Filename[:])
-			cache.AddOrUpdate(event.Pid, string(event.Filename[:]))
+
+			filename := string(event.Filename[:])
+			log.Printf("[DEBUG] received event: pid=%d ppid=%d filename=%s (total: %d)", event.Pid, event.Ppid, filename, eventCount)
+
+			cache.AddOrUpdate(event.Pid, filename)
 		}
 	}()
 
 	fmt.Println("ebpf-ai-agent started, aggregation window: 10s")
 	fmt.Printf("Cache size: %d\n", cache.Size())
+	log.Printf("[DEBUG] perf reader initialized, waiting for events...")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

@@ -5,30 +5,30 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
+#include "probe.h"
 
-// Ring buffer (kernel 5.8+)
+// Perf event array for outputting events to userspace
 struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 256 * 1024);
+    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+    __uint(max_entries, 256);
 } events SEC(".maps");
 
 SEC("tp/sched/sched_process_exec")
 int handle_sched_process_exec(struct trace_event_raw_sched_process_exec *ctx)
 {
-    struct process_event *event;
+    struct ebpfai_event event = {0};
 
-    event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
-    if (!event)
-        return 0;
+    event.pid = bpf_get_current_pid_tgid() >> 32;
+    event.ppid = ctx->old_pid;
 
-    event->pid = bpf_get_current_pid_tgid() >> 32;
-    event->ppid = ctx->old_pid;
+    // Read filename at fixed offset (offset 8 contains __data_loc_filename)
+    unsigned int loc = *(unsigned int *)((char *)ctx + 8);
+    bpf_probe_read_kernel_str(event.filename, sizeof(event.filename),
+                              (char *)ctx + (loc & 0xFFFF));
 
-    // Full CO-RE: use BPF_CORE_READ for stable access
-    bpf_probe_read_kernel_str(event->filename, sizeof(event->filename),
-                              (void *)ctx + ctx->__data_loc_filename);
-
-    bpf_ringbuf_submit(event, 0);
+    // Output to perf event array
+    bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU,
+                          &event, sizeof(event));
     return 0;
 }
 

@@ -187,7 +187,18 @@ func main() {
 			binary.Read(r, binary.LittleEndian, &event.Ppid)
 			r.Read(event.Filename[:])
 
-			filename := string(event.Filename[:])
+			// Find actual string length (up to null or end of buffer)
+			filenameLen := 0
+			for i, b := range event.Filename {
+				if b == 0 {
+					filenameLen = i
+					break
+				}
+				if i == len(event.Filename)-1 {
+					filenameLen = i + 1
+				}
+			}
+			filename := string(event.Filename[:filenameLen])
 			log.Printf("[DEBUG] received event: pid=%d ppid=%d filename=%s (total: %d)", event.Pid, event.Ppid, filename, eventCount)
 
 			cache.AddOrUpdate(event.Pid, filename)

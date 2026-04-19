@@ -1,0 +1,33 @@
+# 构建配置（包含敏感信息）
+build/config.sh
+
+# SSH 私钥（绝对不要提交）
+*.pem
+*.key
+id_rsa
+id_ed25519
+!.ssh/*.pub
+
+# 配置文件（可能包含API Key）
+config.yaml
+
+# 二进制文件
+ebpf-ai-agent
+ebpf-ai-agent-*
+
+# eBPF生成文件（由go generate自动生成）
+*_event.go
+*_bpfel.go
+*_bpfeb.go
+*.o
+
+# 内核特定文件（由bpftool生成，与内核版本相关）
+bpf/vmlinux.h
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 系统文件
+.DS_Store

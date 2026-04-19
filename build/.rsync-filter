@@ -1,0 +1,6 @@
+- .git/
+- .claude/
+- *.o
+- *_event.go
+- ebpf-ai-agent
+- ebpf-ai-agent-*

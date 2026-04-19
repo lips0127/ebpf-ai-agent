@@ -9,14 +9,14 @@
 │                     用户空间 (Go)                           │
 ├─────────────────────────────────────────────────────────────┤
 │  cmd/main.go           │  pkg/analyzer.go   │ pkg/config/  │
-│  - 事件读取            │  - AI 风险分析     │ - 配置加载  │
-│  - 行为聚合            │  - JSON 报告输出   │ - YAML 解析 │
-│  - 信号处理            │                    │             │
+│  - 事件读取           │  - AI 风险分析     │ - 配置加载  │
+│  - 行为聚合           │  - JSON 报告输出   │ - YAML 解析 │
+│  - 信号处理           │                    │             │
 ├─────────────────────────────────────────────────────────────┤
 │                     内核空间 (eBPF)                         │
-│  bpf/probe.c                                               │
-│  - sched_process_exec Tracepoint 监控                       │
-│  - Ring Buffer 事件传递                                    │
+│  bpf/probe_*.c                                           │
+│  - sched_process_exec Tracepoint 监控                      │
+│  - Perf Event / Ring Buffer 事件传递                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -30,16 +30,30 @@
 
 ---
 
+## 多内核版本支持
+
+| 内核版本 | BTF | CO-RE | Ringbuf | 探测方式 |
+|---------|-----|-------|---------|---------|
+| 5.4-5.7 | ❌ | ❌ | ❌ | 手动定义结构体 + perf event |
+| 5.8-5.15 | 部分 | 部分 | ✅ | vmlinux.h + perf event |
+| 6.0+ | ✅ | ✅ | ✅ | 完整 CO-RE + ringbuf |
+
+---
+
 ## 目录结构
 
 ```
 ebpf-ai-agent/
 ├── bpf/
-│   ├── probe.c          # eBPF C 探针源码
+│   ├── probe.h           # 公共头文件
+│   ├── probe_5_4.c      # 5.4 内核专用探针（无 BTF/CO-RE）
+│   ├── probe_5_8.c      # 5.8-5.15 内核探针（ringbuf）
+│   ├── probe_6_0.c      # 6.0+ 内核探针（完整 CO-RE）
+│   ├── build.sh         # 内核版本检测与编译脚本
 │   ├── bpf.go           # go:generate 调用 bpf2go
 │   ├── bpf_event*.go    # 自动生成的 eBPF Go 绑定
-│   ├── vmlinux.h        # 内核 BTF 头文件
-│   └── 编译指南.md       # eBPF 编译详细说明
+│   ├── vmlinux.h        # 内核 BTF 头文件（按需生成）
+│   └── 编译指南.md       # 详细编译说明
 │
 ├── pkg/
 │   ├── analyzer/         # AI 分析模块
@@ -53,13 +67,11 @@ ebpf-ai-agent/
 ├── build/
 │   ├── remote-build.sh  # 远程构建脚本
 │   ├── remote-build.bat # Windows 构建脚本
-│   ├── config.sh        # 构建配置（gitignore）
-│   └── VMware配置与构建指南.md
+│   └── config.sh        # 构建配置（gitignore）
 │
 ├── go.mod               # Go 模块定义
 ├── go.sum               # 依赖锁定
 ├── config.yaml.example  # 配置示例
-├── CLAUDE.md            # Claude Code 上下文
 └── README.md            # 本文件
 ```
 
@@ -67,37 +79,24 @@ ebpf-ai-agent/
 
 ## 核心文件说明
 
-### bpf/probe.c
+### bpf/probe_*.c
 
-eBPF 探针，挂载到 `tp/sched/sched_process_exec`。
+针对不同内核版本的探针实现：
 
-```c
-// 监控进程执行事件，提取：
-// - pid: 当前进程 ID
-// - ppid: 父进程 ID
-// - filename: 可执行文件路径
+- `probe_5_4.c` - 5.4-5.7 内核，纯手动结构体定义，无 BTF
+- `probe_5_8.c` - 5.8-5.15 内核，使用 ringbuf 但不用 CO-RE
+- `probe_6_0.c` - 6.0+ 内核，完整 CO-RE 支持
+
+所有探针挂载到 `tp/sched/sched_process_exec`，提取 pid、ppid、filename。
+
+### bpf/build.sh
+
+自动检测内核版本并选择合适的探针编译：
+
+```bash
+cd bpf/
+./build.sh
 ```
-
-### bpf/bpf.go
-
-定义 `Event` 结构体，供用户态解析 Ring Buffer 数据。
-
-### cmd/main.go
-
-主程序：
-1. 加载 eBPF 对象
-2. 打开 Ring Buffer 读取器
-3. 聚合 10 秒窗口内的进程行为
-4. 调用 AI 分析
-5. 输出风险报告
-
-### pkg/analyzer/analyzer.go
-
-Minimax AI API 调用，将行为数据发送给 AI 进行风险评估。
-
-### pkg/config/config.go
-
-YAML 配置文件加载，支持自定义 API Key、聚合窗口等参数。
 
 ---
 
@@ -137,10 +136,15 @@ minimax_api_key: "your-api-key"  # 可选，不填则只收集行为
 
 ### 3. 构建
 
-**方式一：本地构建（需要 Linux 环境）**
+**方式一：本地构建（推荐）**
 
 ```bash
-go generate ./...
+# 检测内核版本并编译
+cd bpf/
+./build.sh
+
+# 返回项目根目录编译主程序
+cd ..
 CGO_ENABLED=0 go build -o ebpf-ai-agent ./cmd
 ```
 
@@ -156,44 +160,53 @@ export TENANT_KEY="$HOME/.ssh/your-key.pem"
 ./build/remote-build.sh
 ```
 
+**方式三：交叉编译（路由器/开发板）**
+
+```bash
+# ARM64 (如路由器)
+GOARCH=arm64 GOOS=linux CGO_ENABLED=0 go build -o ebpf-ai-agent-arm64 ./cmd
+```
+
 ### 4. 运行
 
 ```bash
-# 需要 root 权限（eBPF 加载要求）
+# 需要 root 权限
 sudo ./ebpf-ai-agent
 ```
 
 ### 5. 测试
 
-正常运行命令观察输出：
+观察输出：
 
 ```bash
 # 正常行为
 ls /tmp
 cat /etc/hostname
 
-# 可疑行为
+# 可疑行为（用于测试监控）
 curl -sL https://example.com/script.sh | bash
 ```
 
 ---
 
-## 配置说明
-
-`config.yaml` 配置项：
-
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| minimax_api_key | Minimax API Key | 空（仅收集） |
-
----
-
 ## 编译说明
 
-eBPF 代码无法在 Windows 本地编译，需要：
+eBPF 代码无法在 Windows 本地编译，需要 Linux 环境。
 
-1. **Linux 云服务器** - 编译用
-2. **Linux 虚拟机/物理机** - 测试用
+### 内核版本检测
+
+```bash
+uname -r
+cat /proc/sys/kernel/unprivileged_bpf_disabled
+ls -la /sys/kernel/btf/vmlinux  # 检查 BTF 支持
+```
+
+### vmlinux.h 生成
+
+```bash
+# 如果内核有 BTF
+sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+```
 
 详见：
 - [bpf/编译指南.md](bpf/编译指南.md)
@@ -201,29 +214,15 @@ eBPF 代码无法在 Windows 本地编译，需要：
 
 ---
 
-## 安全说明
+## 面试亮点
 
-- eBPF 程序加载需要 `root` 权限
-- 云服务器可能禁用 `unprivileged_bpf`，需在本地环境测试
-- API Key 不要提交到 git，`.gitignore` 已配置
+本项目展示了以下技能：
 
----
-
-## 开发说明
-
-### 重新生成 eBPF 绑定
-
-修改 `probe.c` 后：
-
-```bash
-go generate ./...
-```
-
-### 添加新 Tracepoint
-
-1. 在 `probe.c` 添加新 SEC 和处理函数
-2. 在 `bpf/bpf.go` 定义对应的 Go 结构体
-3. 在 `main.go` 添加 Ring Buffer 读取逻辑
+1. **eBPF 探针开发** - 多种内核版本的兼容性处理
+2. **CO-RE 技术** - 内核版本差异的解决方案
+3. **Go + CGO 分离** - 纯 Go 用户态，C 代码独立编译
+4. **交叉编译** - ARM64 路由器部署
+5. **AI 安全分析** - LLM API 集成
 
 ---
 

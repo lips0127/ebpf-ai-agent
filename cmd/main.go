@@ -19,7 +19,7 @@ import (
 	"ebpf-ai-agent/pkg/analyzer"
 	"ebpf-ai-agent/pkg/config"
 
-	"github.com/cilium/ebpf/ringbuf"
+	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
 )
 
@@ -146,9 +146,9 @@ func main() {
 	}
 	defer objs.Close()
 
-	rd, err := ringbuf.NewReader(objs.Events)
+	rd, err := perf.NewReader(objs.Events, 4096)
 	if err != nil {
-		log.Fatalf("failed to open ringbuf reader: %v", err)
+		log.Fatalf("failed to open perf reader: %v", err)
 	}
 	defer rd.Close()
 
@@ -161,11 +161,11 @@ func main() {
 		for {
 			record, err := rd.Read()
 			if err != nil {
-				if err == ringbuf.ErrClosed {
+				if err == perf.ErrClosed {
 					close(flushDone)
 					return
 				}
-				log.Printf("failed to read ringbuf: %v", err)
+				log.Printf("failed to read perf: %v", err)
 				continue
 			}
 

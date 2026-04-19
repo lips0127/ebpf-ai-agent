@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(go mod *)",
+      "Bash(ssh *)",
+      "Bash(./build/remote-build.sh)",
+      "Bash(tar czf *)",
+      "Bash(bash -x ./build/remote-build.sh)",
+      "Bash(scp *)",
+      "Bash(go generate *)",
+      "Bash(sshpass *)",
+      "Bash(chmod 600 ~/.ssh/config)",
+      "Bash(chmod 600 ~/.ssh/weizhou_PC_12600KF.pem)",
+      "Bash(ssh-keygen -R 192.168.110.130)",
+      "Bash(chmod +x *)"
+    ]
+  }
+}

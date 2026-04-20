@@ -79,7 +79,7 @@ sudo systemctl restart sshd
 
 ```bash
 ip addr show ens33 | grep inet
-# 输出示例：inet 192.168.0.113/24
+# 输出示例：inet 192.168.0.130/24
 ```
 
 ---
@@ -93,14 +93,14 @@ ip addr show ens33 | grep inet
 ~/.ssh/weizhou_PC_12600KF.pem
 
 # 测试连接
-ssh -i ~/.ssh/weizhou_PC_12600KF.pem ubuntu@124.223.112.190
+ssh -i ~/.ssh/weizhou_PC_12600KF.pem ubuntu@124.223.xxx.xxx
 ```
 
 ### 腾讯云构建配置
 
 ```bash
 # 项目配置
-export TENANT_HOST="124.223.112.190"
+export TENANT_HOST="124.223.xxx.xxx"
 export TENANT_USER="ubuntu"
 export TENANT_KEY="$HOME/.ssh/weizhou_PC_12600KF.pem"
 ```
@@ -153,7 +153,7 @@ sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > /tmp/vmlinux.h
 ```bash
 # 在虚拟机中，从腾讯云同步代码
 scp -i ~/.ssh/weizhou_PC_12600KF.pem \
-    ubuntu@124.223.112.190:/tmp/ebpf-build-*/ebpf-ai-agent ./
+    ubuntu@124.223.xxx.xxx:/tmp/ebpf-build-*/ebpf-ai-agent ./
 
 # 或直接克隆仓库
 git clone https://github.com/your-repo/ebpf-ai-agent.git
@@ -176,10 +176,10 @@ cd ebpf-ai-agent
 # 3. 复制到 VMware 测试
 scp -i ~/.ssh/weizhou_PC_12600KF.pem \
     ./ebpf-ai-agent \
-    ubuntu@192.168.0.113:/home/ubuntu/
+    ubuntu@192.168.0.130:/home/ubuntu/
 
 # 4. 在 VMware 中运行
-ssh ubuntu@192.168.0.113
+ssh ubuntu@192.168.0.130
 sudo /home/ubuntu/ebpf-ai-agent
 ```
 
@@ -207,7 +207,7 @@ sudo ./ebpf-ai-agent
 ```bash
 # 在 Windows 本地
 ./build/remote-build.sh \
-    --host 192.168.0.113 \
+    --host 192.168.0.130 \
     --user ubuntu \
     --key ~/.ssh/your-vm-key
 ```
@@ -223,7 +223,7 @@ sudo ./ebpf-ai-agent
 ```bash
 #!/bin/bash
 # 腾讯云服务器配置
-export TENANT_HOST="124.223.112.190"
+export TENANT_HOST="124.223.xxx.xxx"
 export TENANT_USER="ubuntu"
 export TENANT_PORT="22"
 export TENANT_KEY="$HOME/.ssh/weizhou_PC_12600KF.pem"
@@ -239,7 +239,7 @@ export TENANT_KEY="$HOME/.ssh/weizhou_PC_12600KF.pem"
 ./build/remote-build.sh --action build
 
 # 指定主机（覆盖 config.sh）
-./build/remote-build.sh --host 124.223.112.190 --user ubuntu --key ~/.ssh/weizhou_PC_12600KF.pem
+./build/remote-build.sh --host 124.223.xxx.xxx --user ubuntu --key ~/.ssh/weizhou_PC_12600KF.pem
 ```
 
 ---
@@ -312,5 +312,5 @@ go version
 
 | 环境 | IP | 用途 |
 |------|-----|------|
-| 腾讯云 | 124.223.112.190 | 编译构建 |
-| VMware | 192.168.0.113 | 测试运行 |
+| 腾讯云 | 124.223.xxx.xxx | 编译构建 |
+| VMware | 192.168.0.130 | 测试运行 |

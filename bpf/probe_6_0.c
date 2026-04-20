@@ -7,28 +7,36 @@
 #include <bpf/bpf_tracing.h>
 #include "probe.h"
 
-// Perf event array for outputting events to userspace
+// Ringbuf map for outputting events to userspace (kernel 6.0+)
 struct {
-    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-    __uint(max_entries, 256);
-} events SEC(".maps");
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 4096);
+} rb SEC(".maps");
 
 SEC("tp/sched/sched_process_exec")
 int handle_sched_process_exec(struct trace_event_raw_sched_process_exec *ctx)
 {
-    struct ebpfai_event event = {0};
+    struct ebpfai_event *event;
 
-    event.pid = bpf_get_current_pid_tgid() >> 32;
-    event.ppid = ctx->old_pid;
+    // Reserve space in ringbuf
+    event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
+    if (!event)
+        return 0;
+
+    event->pid = bpf_get_current_pid_tgid() >> 32;
+    event->ppid = ctx->old_pid;
 
     // Read filename at fixed offset (offset 8 contains __data_loc_filename)
     unsigned int loc = *(unsigned int *)((char *)ctx + 8);
-    bpf_probe_read_kernel_str(event.filename, sizeof(event.filename),
+    bpf_probe_read_kernel_str(event->filename, sizeof(event->filename),
                               (char *)ctx + (loc & 0xFFFF));
 
-    // Output to perf event array
-    bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU,
-                          &event, sizeof(event));
+    // argv is captured via pt_regs in later processing
+    // For now, initialize to empty
+    event->argv[0] = '\0';
+
+    // Submit to ringbuf
+    bpf_ringbuf_submit(event, 0);
     return 0;
 }
 

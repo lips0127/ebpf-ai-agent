@@ -13,6 +13,7 @@ type ProcessBehavior struct {
 	StartTime time.Time `json:"start_time"`
 	LastSeen  time.Time `json:"last_seen"`
 	Filenames []string  `json:"filenames"`
+	Argv      string    `json:"argv"`  // command line arguments
 }
 
 type RiskReport struct {
@@ -57,7 +58,11 @@ func BuildPrompt(behavior *ProcessBehavior) string {
 	buf.WriteString(fmt.Sprintf("- 进程 PID: %d\n", behavior.PID))
 	buf.WriteString(fmt.Sprintf("- 首次出现时间: %s\n", behavior.StartTime.Format(time.RFC3339)))
 	buf.WriteString(fmt.Sprintf("- 最后活跃时间: %s\n", behavior.LastSeen.Format(time.RFC3339)))
-	buf.WriteString(fmt.Sprintf("- 时间窗口内执行文件数: %d\n\n", len(behavior.Filenames)))
+	buf.WriteString(fmt.Sprintf("- 时间窗口内执行文件数: %d\n", len(behavior.Filenames)))
+	if behavior.Argv != "" {
+		buf.WriteString(fmt.Sprintf("- 命令行参数: %s\n", behavior.Argv))
+	}
+	buf.WriteString("\n")
 
 	buf.WriteString("执行的文件路径列表：\n")
 	seen := make(map[string]bool)

@@ -11,16 +11,20 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"ebpf-ai-agent/bpf"
 	"ebpf-ai-agent/pkg/analyzer"
 	"ebpf-ai-agent/pkg/config"
+	"ebpf-ai-agent/pkg/diagnostics"
 	"ebpf-ai-agent/pkg/filter"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
 
@@ -81,7 +85,7 @@ func NewBehaviorCache() *BehaviorCache {
 	}
 }
 
-func (c *BehaviorCache) AddOrUpdate(pid uint32, filename string) {
+func (c *BehaviorCache) AddOrUpdate(pid uint32, filename, argv string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -89,7 +93,12 @@ func (c *BehaviorCache) AddOrUpdate(pid uint32, filename string) {
 
 	if beh, exists := c.behaviors[pid]; exists {
 		beh.LastSeen = now
-		beh.Filenames = append(beh.Filenames, filename)
+		if filename != "" {
+			beh.Filenames = append(beh.Filenames, filename)
+		}
+		if argv != "" {
+			beh.Argv = argv
+		}
 		return
 	}
 
@@ -98,6 +107,7 @@ func (c *BehaviorCache) AddOrUpdate(pid uint32, filename string) {
 		StartTime: now,
 		LastSeen:  now,
 		Filenames: []string{filename},
+		Argv:      argv,
 	}
 }
 
@@ -167,17 +177,18 @@ func runFlushTask(cache *BehaviorCache, done <-chan struct{}) {
 					primaryCmd = parts[len(parts)-1]
 				}
 
-				fmt.Printf("[AGGREGATED] pid=%d duration=%s cmds=%d unique_files=%d first=%s last=%s\n",
+				fmt.Printf("[AGGREGATED] pid=%d duration=%s cmds=%d unique_files=%d first=%s last=%s argv=%q\n",
 					beh.PID,
 					duration.Round(time.Second),
 					len(beh.Filenames),
 					len(uniqueFiles),
 					firstFile,
-					lastFile)
+					lastFile,
+					beh.Argv)
 
 				// Apply filter before AI analysis
 				if filterGlobal != nil {
-					filterResult, filterReason := filterGlobal.Match(primaryCmd, beh.Filenames)
+					filterResult, filterReason := filterGlobal.Match(primaryCmd, beh.Filenames, beh.Argv)
 					fmt.Printf("[FILTER] result=%s reason=%s\n", filterResult, filterReason)
 
 					switch filterResult {
@@ -226,6 +237,9 @@ func main() {
 
 	logger.Println("ebpf-ai-agent starting...")
 
+	// Run diagnostics before loading eBPF
+	diagnostics.CheckSystemState(logger)
+
 	// Initialize filter
 	filterGlobal = filter.New()
 	logger.Printf("pattern filter initialized: %s", filterGlobal)
@@ -236,7 +250,7 @@ func main() {
 	} else {
 		warnings := cfg.Validate()
 		for _, w := range warnings {
-			logger.Printf("config warning: %w", w)
+			logger.Printf("config warning: %s", w)
 		}
 
 		// Get API key (handles encrypted vs plaintext)
@@ -272,11 +286,32 @@ func main() {
 	defer l.Close()
 	logger.Println("tracepoint attached successfully")
 
-	rd, err := perf.NewReader(objs.Events, 4096)
-	if err != nil {
-		logger.Fatalf("failed to open perf reader: %v", err)
+	// Try to use ringbuf first (kernel 6.0+), fall back to perf
+	var reader interface {
+		Read() ([]byte, error)
+		Close() error
 	}
-	defer rd.Close()
+	var usingRingbuf bool
+
+	// Check kernel version - ringbuf requires 6.0+
+	kernelVersion := runtime.Version()
+	logger.Printf("detected kernel version: %s", kernelVersion)
+
+	// Attempt to create ringbuf reader (kernel 6.0+)
+	if ringReader, err := ebpf.NewRingbufReader(objs.Events); err == nil {
+		reader = &ringbufWrapper{rd: ringReader}
+		usingRingbuf = true
+		logger.Println("using ringbuf for event collection (kernel 6.0+)")
+	} else {
+		// Fall back to perf reader
+		rd, err := perf.NewReader(objs.Events, 4096)
+		if err != nil {
+			logger.Fatalf("failed to open perf reader: %v", err)
+		}
+		reader = &perfWrapper{rd: rd}
+		logger.Println("using perf reader for event collection")
+	}
+	defer reader.Close()
 
 	cache := NewBehaviorCache()
 	flushDone := make(chan struct{})
@@ -284,26 +319,27 @@ func main() {
 	go runFlushTask(cache, flushDone)
 
 	eventCount := 0
+	lostCount := 0
+
 	go func() {
 		for {
-			record, err := rd.Read()
+			data, err := reader.Read()
 			if err != nil {
-				if err == perf.ErrClosed {
-					close(flushDone)
-					return
-				}
-				log.Printf("failed to read perf: %v", err)
-				continue
+				close(flushDone)
+				return
 			}
 
 			eventCount++
+
+			// Parse event from raw bytes
 			var event bpf.Event
-			r := bytes.NewReader(record.RawSample)
+			r := bytes.NewReader(data)
 			binary.Read(r, binary.LittleEndian, &event.Pid)
 			binary.Read(r, binary.LittleEndian, &event.Ppid)
 			r.Read(event.Filename[:])
+			r.Read(event.Argv[:])
 
-			// Find actual string length (up to null or end of buffer)
+			// Find actual string length for filename
 			filenameLen := 0
 			for i, b := range event.Filename {
 				if b == 0 {
@@ -315,15 +351,41 @@ func main() {
 				}
 			}
 			filename := string(event.Filename[:filenameLen])
-			logger.Printf("event: pid=%d ppid=%d filename=%s (total: %d)", event.Pid, event.Ppid, filename, eventCount)
 
-			cache.AddOrUpdate(event.Pid, filename)
+			// Find actual string length for argv
+			argvLen := 0
+			for i, b := range event.Argv {
+				if b == 0 {
+					argvLen = i
+					break
+				}
+				if i == len(event.Argv)-1 {
+					argvLen = i + 1
+				}
+			}
+			argv := string(event.Argv[:argvLen])
+
+			// Log event (rate-limited in debug mode)
+			if eventCount%100 == 0 || usingRingbuf {
+				logger.Printf("event: pid=%d ppid=%d filename=%s argv=%q (total: %d lost: %d)",
+					event.Pid, event.Ppid, filename, argv, eventCount, lostCount)
+			}
+
+			// Check for lost samples (ringbuf reports this in data)
+			if len(data) < int(unsafe.Sizeof(event)) {
+				lostCount++
+				if lostCount%100 == 0 {
+					logger.Printf("WARNING: detected %d lost events, system may be overwhelmed", lostCount)
+				}
+			}
+
+			cache.AddOrUpdate(event.Pid, filename, argv)
 		}
 	}()
 
 	fmt.Println("ebpf-ai-agent started, aggregation window: 10s")
 	fmt.Printf("Cache size: %d\n", cache.Size())
-	logger.Println("perf reader initialized, waiting for events...")
+	logger.Println("event reader initialized, waiting for events...")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -331,4 +393,40 @@ func main() {
 
 	close(flushDone)
 	fmt.Println("shutting down...")
+}
+
+// ringbufWrapper wraps cilium/ebpf/ringbuf.Reader for uniform interface
+type ringbufWrapper struct {
+	rd *ebpf.RingbufReader
+}
+
+func (r *ringbufWrapper) Read() ([]byte, error) {
+	record, err := r.rd.Read()
+	if err != nil {
+		return nil, err
+	}
+	return record.RawSample, nil
+}
+
+func (r *ringbufWrapper) Close() error {
+	return r.rd.Close()
+}
+
+// perfWrapper wraps cilium/ebpf/perf.Reader for uniform interface
+type perfWrapper struct {
+	rd *perf.Reader
+}
+
+func (p *perfWrapper) Read() ([]byte, error) {
+	record, err := p.rd.Read()
+	if err != nil {
+		return nil, err
+	}
+	return record.RawSample, nil
+}
+
+func (p *perfWrapper) Close() error {
+	p.rd.Close()
+	return nil
+}
 }

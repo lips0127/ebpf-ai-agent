@@ -13,7 +13,14 @@
       "Bash(chmod 600 ~/.ssh/config)",
       "Bash(chmod 600 ~/.ssh/weizhou_PC_12600KF.pem)",
       "Bash(ssh-keygen -R 192.168.110.130)",
-      "Bash(chmod +x *)"
+      "Bash(chmod +x *)",
+      "Bash(cmd.exe /c \"where ssh\")",
+      "Bash(ssh-keygen -t rsa -b 4096 -C \"router-rsa\" -f ~/.ssh/id_router_rsa -N \"\")",
+      "WebSearch",
+      "WebFetch(domain:www.kernel.org)",
+      "Bash(rsync -avz --progress -e \"ssh -i C:/Users/weizhou/.ssh/id_rsa\" scripts/ ubuntu@192.168.181.128:/home/ubuntu/ebpf-ai-agent/scripts/)",
+      "Bash(go build *)",
+      "Bash(go test *)"
     ]
   }
 }

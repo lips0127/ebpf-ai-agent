@@ -27,6 +27,9 @@ int handle_sched_process_exec(struct trace_event_raw_sched_process_exec *ctx)
     bpf_probe_read_kernel_str(event.filename, sizeof(event.filename),
                               (char *)ctx + (loc & 0xFFFF));
 
+    // argv placeholder
+    event.argv[0] = '\0';
+
     // Output to perf event array
     bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU,
                           &event, sizeof(event));

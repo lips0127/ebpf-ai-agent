@@ -57,8 +57,9 @@ func NewMatcher() *Matcher {
 
 // Match checks a command/filename against all patterns.
 // Returns the most severe match (blacklist > greylist > whitelist).
-func (m *Matcher) Match(cmd string, filenames []string) (Result, string) {
-	target := strings.TrimSpace(cmd + " " + strings.Join(filenames, " "))
+// argv is used for additional context in pattern matching.
+func (m *Matcher) Match(cmd string, filenames []string, argv string) (Result, string) {
+	target := strings.TrimSpace(cmd + " " + strings.Join(filenames, " ") + " " + argv)
 
 	// Check blacklist first (highest priority for malicious)
 	for _, p := range m.blacklist {

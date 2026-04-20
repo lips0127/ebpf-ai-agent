@@ -292,7 +292,8 @@ func main() {
 	defer objs.Close()
 
 	// Attach tracepoint program
-	l, err := link.Tracepoint("sched", "sched_process_exec", objs.HandleSchedProcessExec, nil)
+	// For argv capture, we use raw_syscalls:sys_enter which provides pt_regs context
+	l, err := link.Tracepoint("raw_syscalls", "sys_enter", objs.HandleSysEnter, nil)
 	if err != nil {
 		logger.Fatalf("failed to attach tracepoint: %v", err)
 	}

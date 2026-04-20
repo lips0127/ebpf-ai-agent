@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go@latest Event probe_6_0.c
-
 var (
 	// lostEventCount tracks lost events across all readers
 	lostEventCount atomic.Int64
@@ -85,9 +83,16 @@ func GatherSystemState() *SystemState {
 		state.TracerActive = strings.TrimSpace(string(data))
 	}
 
-	// Read tracing_on
-	if data, err := os.ReadFile("/proc/sys/kernel/tracing_on"); err == nil {
-		state.TracingOn = strings.TrimSpace(string(data)) == "1"
+	// Read tracing_on - try both possible locations
+	tracingOnPaths := []string{
+		"/sys/kernel/debug/tracing/tracing_on",
+		"/proc/sys/kernel/tracing_on",
+	}
+	for _, path := range tracingOnPaths {
+		if data, err := os.ReadFile(path); err == nil {
+			state.TracingOn = strings.TrimSpace(string(data)) == "1"
+			break
+		}
 	}
 
 	// Read unprivileged_bpf
@@ -179,10 +184,7 @@ func ReadTracingOn() (bool, error) {
 // IsRingbufSupported checks if the kernel supports ringbuf (6.0+).
 func IsRingbufSupported() bool {
 	// Ringbuf was introduced in Linux 5.8, but stable support is 6.0+
-	version := runtime.Version()
-	// version strings like "go1.21.4" or "go1.22.0"
-	// The actual kernel version is from runtime.GOOS/GOARCH check
-	// For now, assume ringbuf is supported if BTF is available
+	// Check if BTF is available (indicates newer kernel)
 	if _, err := os.Stat("/sys/kernel/btf/vmlinux"); err == nil {
 		return true
 	}

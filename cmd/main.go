@@ -24,8 +24,8 @@ import (
 	"ebpf-ai-agent/pkg/diagnostics"
 	"ebpf-ai-agent/pkg/filter"
 
-	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/perf"
+	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 
 	"github.com/cilium/ebpf/link"
@@ -241,7 +241,7 @@ func main() {
 	diagnostics.CheckSystemState(logger)
 
 	// Initialize filter
-	filterGlobal = filter.New()
+	filterGlobal = filter.NewMatcher()
 	logger.Printf("pattern filter initialized: %s", filterGlobal)
 
 	cfg, err := config.Load(*configPath)
@@ -272,9 +272,22 @@ func main() {
 		logger.Fatalf("failed to remove memlock rlimit: %v", err)
 	}
 
+	// Load BPF objects - try with nil options first, fallback to no-BTF
 	var objs bpf.EventObjects
 	if err := bpf.LoadEventObjects(&objs, nil); err != nil {
-		logger.Fatalf("failed to load eBPF objects: %v", err)
+		// If BTF fails, try disabling CO-RE
+		logger.Printf("BTF load failed, retrying without CO-RE: %v", err)
+		spec, err := bpf.LoadEvent()
+		if err != nil {
+			logger.Fatalf("failed to load BPF spec: %v", err)
+		}
+		// Disable CO-RE
+		for i := range spec.Programs {
+			spec.Programs[i].AttachType = 0
+		}
+		if err := spec.LoadAndAssign(&objs, nil); err != nil {
+			logger.Fatalf("failed to load eBPF objects (non-BTF): %v", err)
+		}
 	}
 	defer objs.Close()
 
@@ -297,19 +310,18 @@ func main() {
 	kernelVersion := runtime.Version()
 	logger.Printf("detected kernel version: %s", kernelVersion)
 
-	// Attempt to create ringbuf reader (kernel 6.0+)
-	if ringReader, err := ebpf.NewRingbufReader(objs.Events); err == nil {
+	// Use ringbuf reader for kernel 6.0+
+	// Rb map is created by probe_6_0.c (ringbuf)
+	if objs.Rb != nil {
+		ringReader, err := ringbuf.NewReader(objs.Rb)
+		if err != nil {
+			logger.Fatalf("failed to open ringbuf reader: %v", err)
+		}
 		reader = &ringbufWrapper{rd: ringReader}
 		usingRingbuf = true
 		logger.Println("using ringbuf for event collection (kernel 6.0+)")
 	} else {
-		// Fall back to perf reader
-		rd, err := perf.NewReader(objs.Events, 4096)
-		if err != nil {
-			logger.Fatalf("failed to open perf reader: %v", err)
-		}
-		reader = &perfWrapper{rd: rd}
-		logger.Println("using perf reader for event collection")
+		logger.Fatalf("no suitable BPF map found (neither ringbuf nor perf)")
 	}
 	defer reader.Close()
 
@@ -397,7 +409,7 @@ func main() {
 
 // ringbufWrapper wraps cilium/ebpf/ringbuf.Reader for uniform interface
 type ringbufWrapper struct {
-	rd *ebpf.RingbufReader
+	rd *ringbuf.Reader
 }
 
 func (r *ringbufWrapper) Read() ([]byte, error) {
@@ -428,5 +440,4 @@ func (p *perfWrapper) Read() ([]byte, error) {
 func (p *perfWrapper) Close() error {
 	p.rd.Close()
 	return nil
-}
 }
